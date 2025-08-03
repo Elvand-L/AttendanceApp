@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendance Check-in Prototype</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Use Inter font family */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Simple transition for button hover */
+        .btn-hover {
+            transition: background-color 0.3s ease, transform 0.1s ease;
+        }
+        .btn-hover:active {
+            transform: scale(0.98);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+
+    <div class="w-full max-w-md mx-auto bg-white rounded-xl shadow-lg p-8 text-center">
+        
+        <!-- Header Section -->
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">Attendance Verification</h1>
+        <p class="text-gray-500 mb-6">Click the button to verify your location for check-in.</p>
+
+        <!-- Check-in Button -->
+        <button id="checkInButton" class="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 btn-hover">
+            Check In
+        </button>
+
+        <!-- Status & Results Display -->
+        <div id="status" class="mt-6 p-4 bg-gray-50 rounded-lg min-h-[120px] flex flex-col justify-center items-center">
+            <p class="text-gray-600">Your status will appear here.</p>
+        </div>
+
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        // Office Location: The Breeze BSD City, Tangerang
+        const OFFICE_COORDINATES = {
+            latitude: -6.3020,
+            longitude: 106.6520
+        };
+        const ALLOWED_RADIUS_METERS = 50; // 50-meter radius
+
+        // --- DOM ELEMENTS ---
+        const checkInButton = document.getElementById('checkInButton');
+        const statusDiv = document.getElementById('status');
+
+        // --- EVENT LISTENER ---
+        checkInButton.addEventListener('click', () => {
+            // Reset status and show loading message
+            statusDiv.innerHTML = `<p class="text-blue-600 animate-pulse">Getting your location...</p>`;
+            
+            // Request the user's location
+            if ('geolocation' in navigator) {
+                navigator.geolocation.getCurrentPosition(handleSuccess, handleError, {
+                    enableHighAccuracy: true, // Request a more precise location
+                    timeout: 10000,           // Stop trying after 10 seconds
+                    maximumAge: 0             // Don't use a cached location
+                });
+            } else {
+                statusDiv.innerHTML = `<p class="text-red-600 font-semibold">Geolocation is not supported by your browser.</p>`;
+            }
+        });
+
+        // --- GEOLOCATION HANDLERS ---
+
+        /**
+         * Handles the successful retrieval of the user's location.
+         * @param {GeolocationPosition} position - The object containing location data.
+         */
+        function handleSuccess(position) {
+            const userCoords = {
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude
+            };
+
+            // Calculate the distance from the office
+            const distance = getDistance(
+                userCoords.latitude,
+                userCoords.longitude,
+                OFFICE_COORDINATES.latitude,
+                OFFICE_COORDINATES.longitude
+            );
+
+            // Determine if the user is within the allowed radius
+            const isInRange = distance <= ALLOWED_RADIUS_METERS;
+            
+            // Display the results
+            let statusHTML = `
+                <p class="text-sm text-gray-500 mb-2">Your Location: ${userCoords.latitude.toFixed(5)}, ${userCoords.longitude.toFixed(5)}</p>
+                <p class="text-sm text-gray-500 mb-3">Distance from Office: <strong>${distance.toFixed(2)} meters</strong></p>
+            `;
+
+            if (isInRange) {
+                statusHTML += `<div class="w-full p-2 rounded-md bg-green-100 text-green-800 font-bold">✅ In Range: Check-in Approved</div>`;
+            } else {
+                statusHTML += `<div class="w-full p-2 rounded-md bg-red-100 text-red-800 font-bold">❌ Out of Range: Check-in Denied</div>`;
+            }
+
+            statusDiv.innerHTML = statusHTML;
+        }
+
+        /**
+         * Handles errors that occur during location retrieval.
+         * @param {GeolocationPositionError} error - The object containing error details.
+         */
+        function handleError(error) {
+            let errorMessage = 'An unknown error occurred.';
+            switch (error.code) {
+                case error.PERMISSION_DENIED:
+                    errorMessage = "Location access denied. Please enable location permissions in your browser settings.";
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    errorMessage = "Location information is unavailable. Check your connection or GPS.";
+                    break;
+                case error.TIMEOUT:
+                    errorMessage = "The request to get user location timed out.";
+                    break;
+            }
+            statusDiv.innerHTML = `<p class="text-red-600 font-semibold">${errorMessage}</p>`;
+        }
+
+        // --- UTILITY FUNCTION ---
+
+        /**
+         * Calculates the distance between two GPS coordinates in meters using the Haversine formula.
+         * @param {number} lat1 - Latitude of the first point.
+         * @param {number} lon1 - Longitude of the first point.
+         * @param {number} lat2 - Latitude of the second point.
+         * @param {number} lon2 - Longitude of the second point.
+         * @returns {number} The distance in meters.
+         */
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; // Earth's radius in meters
+            const φ1 = lat1 * Math.PI / 180; // φ, λ in radians
+            const φ2 = lat2 * Math.PI / 180;
+            const Δφ = (lat2 - lat1) * Math.PI / 180;
+            const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                      Math.cos(φ1) * Math.cos(φ2) *
+                      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+            return R * c; // Distance in meters
+        }
+    </script>
+
+</body>
+</html>
