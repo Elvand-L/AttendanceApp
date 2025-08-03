@@ -17,9 +17,10 @@
         .status-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid #e5e7eb; }
         .status-item:last-child { border-bottom: none; }
         .dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
-        .dot-pending { background-color: #9ca3af; }
+        .dot-pending { background-color: #9ca3af; animation: pulse 1.5s infinite; }
         .dot-success { background-color: #22c55e; }
         .dot-fail { background-color: #ef4444; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     </style>
 </head>
 <body class="bg-gray-100 flex items-center justify-center min-h-screen">
@@ -48,9 +49,6 @@
         const ALLOWED_RADIUS_METERS = 50;
 
         // IMPORTANT: In a real app, this list would be stored securely on your server.
-        // These are the only public IP addresses allowed to check in.
-        // I've added a common public IP for example purposes. You should replace this
-        // with your office's actual public IP address. You can find it by searching "what is my IP" on Google.
         const ALLOWED_IPS = [
             '202.152.0.114', // Example IP, replace with your office's real public IP
             '103.128.85.1'   // Another example
@@ -65,49 +63,60 @@
 
         /**
          * Main function to run all verification steps in order.
+         * This function now runs ALL checks and makes a final decision.
          */
         async function runVerificationChecks() {
-            // Reset UI to show pending status for all checks
             displayInitialStatus();
             checkInButton.disabled = true;
             checkInButton.textContent = 'Verifying...';
 
+            let isLocationOk = false;
+            let isIpOk = false;
+            let isVpnOk = false;
+            const errorMessages = [];
+
+            // --- Step 1: Geolocation Check ---
             try {
-                // --- Step 1: Geolocation Check ---
                 const userCoords = await getGeolocation();
                 const distance = getDistance(userCoords.latitude, userCoords.longitude, OFFICE_COORDINATES.latitude, OFFICE_COORDINATES.longitude);
-                const isLocationOk = distance <= ALLOWED_RADIUS_METERS;
+                isLocationOk = distance <= ALLOWED_RADIUS_METERS;
                 updateStatusItem('location', 'Geolocation', `Distance: ${distance.toFixed(0)}m`, isLocationOk);
-                if (!isLocationOk) throw new Error("Verification failed: You are outside the allowed area.");
+                if (!isLocationOk) errorMessages.push('Out of range');
+            } catch (error) {
+                updateStatusItem('location', 'Geolocation', error.message, false);
+                errorMessages.push('Location failed');
+            }
 
-                // --- Step 2: Network & VPN Check (Simulated Server-Side) ---
-                // We call an external API to get our public IP info. This simulates our server looking at the request.
+            // --- Step 2: Network & VPN Check (Simulated Server-Side) ---
+            try {
                 const ipInfo = await getIpInfo();
                 
                 // Check 2a: Is the IP address on our whitelist?
-                const isIpOk = ALLOWED_IPS.includes(ipInfo.ipAddress);
+                isIpOk = ALLOWED_IPS.includes(ipInfo.ipAddress);
                 updateStatusItem('network', 'Network IP', `Your IP: ${ipInfo.ipAddress}`, isIpOk);
-                if (!isIpOk) throw new Error("Verification failed: You are not on an approved network.");
+                if (!isIpOk) errorMessages.push('Invalid network');
 
                 // Check 2b: Is this a known VPN, Proxy, or Hosting service?
-                const isVpnOk = !ipInfo.isVpnOrProxy;
+                isVpnOk = !ipInfo.isVpnOrProxy;
                 updateStatusItem('vpn', 'VPN/Proxy Check', ipInfo.isVpnOrProxy ? 'Proxy Detected' : 'Connection OK', isVpnOk);
-                if (!isVpnOk) throw new Error("Verification failed: VPNs or Proxies are not allowed.");
-
-                // --- All Checks Passed ---
-                displayFinalResult(true, '✅ Check-in Approved! All checks passed.');
+                if (!isVpnOk) errorMessages.push('VPN detected');
 
             } catch (error) {
-                // --- A Check Failed ---
-                console.error(error.message);
-                // The specific failure will already be marked in the UI.
-                // We just need to show the final failed state.
-                displayFinalResult(false, `❌ ${error.message}`);
-            } finally {
-                // Re-enable the button
-                checkInButton.disabled = false;
-                checkInButton.textContent = 'Verify & Check In';
+                updateStatusItem('network', 'Network IP', 'Check Failed', false);
+                updateStatusItem('vpn', 'VPN/Proxy Check', 'Check Failed', false);
+                errorMessages.push('Network check failed');
             }
+
+            // --- Step 3: Final Decision ---
+            if (isLocationOk && isIpOk && isVpnOk) {
+                displayFinalResult(true, '✅ Check-in Approved! All checks passed.');
+            } else {
+                displayFinalResult(false, `❌ Check-in Denied. Reasons: ${errorMessages.join(', ')}.`);
+            }
+
+            // Re-enable the button
+            checkInButton.disabled = false;
+            checkInButton.textContent = 'Verify & Check In';
         }
 
         // --- UI HELPER FUNCTIONS ---
@@ -120,42 +129,39 @@
                 </div>
                 <div id="status-network" class="status-item">
                     <span><span class="dot dot-pending"></span>Network IP</span>
-                    <span class="text-gray-500">Checking...</span>
+                    <span class="text-gray-500">Waiting...</span>
                 </div>
                 <div id="status-vpn" class="status-item">
                     <span><span class="dot dot-pending"></span>VPN/Proxy Check</span>
-                    <span class="text-gray-500">Checking...</span>
+                    <span class="text-gray-500">Waiting...</span>
                 </div>
-                <div id="final-result" class="text-center font-bold pt-4"></div>
+                <div id="final-result" class="text-center font-bold pt-4 mt-2"></div>
             `;
         }
 
         function updateStatusItem(id, name, message, isSuccess) {
             const item = document.getElementById(`status-${id}`);
-            const dotClass = isSuccess ? 'dot-success' : 'dot-fail';
+            const dot = item.querySelector('.dot');
+            dot.classList.remove('dot-pending');
+            dot.classList.add(isSuccess ? 'dot-success' : 'dot-fail');
+            
             const textClass = isSuccess ? 'text-green-600' : 'text-red-600';
             item.innerHTML = `
-                <span><span class="dot ${dotClass}"></span>${name}</span>
+                <span><span class="dot ${isSuccess ? 'dot-success' : 'dot-fail'}"></span>${name}</span>
                 <span class="${textClass} font-semibold">${message}</span>
             `;
         }
 
         function displayFinalResult(isSuccess, message) {
             const resultDiv = document.getElementById('final-result');
-            resultDiv.className = `text-center font-bold pt-4 ${isSuccess ? 'text-green-700' : 'text-red-700'}`;
+            resultDiv.className = `text-center font-bold pt-4 mt-2 ${isSuccess ? 'text-green-700' : 'text-red-700'}`;
             resultDiv.textContent = message;
         }
 
         // --- ASYNC HELPER FUNCTIONS ---
 
-        /**
-         * Gets the user's IP address and connection type.
-         * This simulates a server-side check.
-         * @returns {Promise<{ipAddress: string, isVpnOrProxy: boolean}>}
-         */
         async function getIpInfo() {
             try {
-                // We use a service that provides IP and connection details in JSON format.
                 const response = await fetch('https://ip-api.com/json/?fields=status,message,query,hosting,proxy');
                 if (!response.ok) throw new Error('IP API response was not ok.');
                 const data = await response.json();
@@ -163,23 +169,18 @@
                 
                 return {
                     ipAddress: data.query,
-                    // The API flags connections from data centers (hosting) or known proxies/VPNs.
                     isVpnOrProxy: data.hosting || data.proxy 
                 };
             } catch (error) {
                 console.error("Could not fetch IP information:", error);
-                throw new Error("Could not verify network connection."); // Propagate error
+                throw new Error("Could not verify network connection.");
             }
         }
 
-        /**
-         * Gets the user's GPS coordinates.
-         * @returns {Promise<GeolocationCoordinates>}
-         */
         function getGeolocation() {
             return new Promise((resolve, reject) => {
                 if (!('geolocation' in navigator)) {
-                    return reject(new Error("Geolocation is not supported by your browser."));
+                    return reject(new Error("Geolocation not supported."));
                 }
                 navigator.geolocation.getCurrentPosition(
                     position => resolve(position.coords),
@@ -193,9 +194,6 @@
             });
         }
 
-        /**
-         * Calculates the distance between two GPS coordinates in meters.
-         */
         function getDistance(lat1, lon1, lat2, lon2) {
             const R = 6371e3;
             const φ1 = lat1 * Math.PI / 180;
