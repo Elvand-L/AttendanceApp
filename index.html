@@ -11,35 +11,32 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        /* Use Inter font family */
-        body {
-            font-family: 'Inter', sans-serif;
-        }
-        /* Simple transition for button hover */
-        .btn-hover {
-            transition: background-color 0.3s ease, transform 0.1s ease;
-        }
-        .btn-hover:active {
-            transform: scale(0.98);
-        }
+        body { font-family: 'Inter', sans-serif; }
+        .btn-hover { transition: background-color 0.3s ease, transform 0.1s ease; }
+        .btn-hover:active { transform: scale(0.98); }
+        .status-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid #e5e7eb; }
+        .status-item:last-child { border-bottom: none; }
+        .dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .dot-pending { background-color: #9ca3af; }
+        .dot-success { background-color: #22c55e; }
+        .dot-fail { background-color: #ef4444; }
     </style>
 </head>
 <body class="bg-gray-100 flex items-center justify-center min-h-screen">
 
-    <div class="w-full max-w-md mx-auto bg-white rounded-xl shadow-lg p-8 text-center">
+    <div class="w-full max-w-md mx-auto bg-white rounded-xl shadow-lg p-8">
         
-        <!-- Header Section -->
-        <h1 class="text-2xl font-bold text-gray-800 mb-2">Attendance Verification</h1>
-        <p class="text-gray-500 mb-6">Click the button to verify your location for check-in.</p>
+        <div class="text-center">
+            <h1 class="text-2xl font-bold text-gray-800 mb-2">Multi-Layer Verification</h1>
+            <p class="text-gray-500 mb-6">Your location, network, and connection will be verified.</p>
+        </div>
 
-        <!-- Check-in Button -->
         <button id="checkInButton" class="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 btn-hover">
-            Check In
+            Verify & Check In
         </button>
 
-        <!-- Status & Results Display -->
-        <div id="status" class="mt-6 p-4 bg-gray-50 rounded-lg min-h-[120px] flex flex-col justify-center items-center">
-            <p class="text-gray-600">Your status will appear here.</p>
+        <div id="status" class="mt-6 p-4 bg-gray-50 rounded-lg min-h-[180px]">
+            <p class="text-gray-600 text-center">Your status will appear here.</p>
         </div>
 
     </div>
@@ -47,114 +44,167 @@
     <script>
         // --- CONFIGURATION ---
         // Office Location: The Breeze BSD City, Tangerang
-        const OFFICE_COORDINATES = {
-            latitude: -6.3020,
-            longitude: 106.6520
-        };
-        const ALLOWED_RADIUS_METERS = 50; // 50-meter radius
+        const OFFICE_COORDINATES = { latitude: -6.3020, longitude: 106.6520 };
+        const ALLOWED_RADIUS_METERS = 50;
+
+        // IMPORTANT: In a real app, this list would be stored securely on your server.
+        // These are the only public IP addresses allowed to check in.
+        // I've added a common public IP for example purposes. You should replace this
+        // with your office's actual public IP address. You can find it by searching "what is my IP" on Google.
+        const ALLOWED_IPS = [
+            '202.152.0.114', // Example IP, replace with your office's real public IP
+            '103.128.85.1'   // Another example
+        ];
 
         // --- DOM ELEMENTS ---
         const checkInButton = document.getElementById('checkInButton');
         const statusDiv = document.getElementById('status');
 
         // --- EVENT LISTENER ---
-        checkInButton.addEventListener('click', () => {
-            // Reset status and show loading message
-            statusDiv.innerHTML = `<p class="text-blue-600 animate-pulse">Getting your location...</p>`;
-            
-            // Request the user's location
-            if ('geolocation' in navigator) {
-                navigator.geolocation.getCurrentPosition(handleSuccess, handleError, {
-                    enableHighAccuracy: true, // Request a more precise location
-                    timeout: 10000,           // Stop trying after 10 seconds
-                    maximumAge: 0             // Don't use a cached location
-                });
-            } else {
-                statusDiv.innerHTML = `<p class="text-red-600 font-semibold">Geolocation is not supported by your browser.</p>`;
-            }
-        });
-
-        // --- GEOLOCATION HANDLERS ---
+        checkInButton.addEventListener('click', runVerificationChecks);
 
         /**
-         * Handles the successful retrieval of the user's location.
-         * @param {GeolocationPosition} position - The object containing location data.
+         * Main function to run all verification steps in order.
          */
-        function handleSuccess(position) {
-            const userCoords = {
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude
-            };
+        async function runVerificationChecks() {
+            // Reset UI to show pending status for all checks
+            displayInitialStatus();
+            checkInButton.disabled = true;
+            checkInButton.textContent = 'Verifying...';
 
-            // Calculate the distance from the office
-            const distance = getDistance(
-                userCoords.latitude,
-                userCoords.longitude,
-                OFFICE_COORDINATES.latitude,
-                OFFICE_COORDINATES.longitude
-            );
+            try {
+                // --- Step 1: Geolocation Check ---
+                const userCoords = await getGeolocation();
+                const distance = getDistance(userCoords.latitude, userCoords.longitude, OFFICE_COORDINATES.latitude, OFFICE_COORDINATES.longitude);
+                const isLocationOk = distance <= ALLOWED_RADIUS_METERS;
+                updateStatusItem('location', 'Geolocation', `Distance: ${distance.toFixed(0)}m`, isLocationOk);
+                if (!isLocationOk) throw new Error("Verification failed: You are outside the allowed area.");
 
-            // Determine if the user is within the allowed radius
-            const isInRange = distance <= ALLOWED_RADIUS_METERS;
-            
-            // Display the results
-            let statusHTML = `
-                <p class="text-sm text-gray-500 mb-2">Your Location: ${userCoords.latitude.toFixed(5)}, ${userCoords.longitude.toFixed(5)}</p>
-                <p class="text-sm text-gray-500 mb-3">Distance from Office: <strong>${distance.toFixed(2)} meters</strong></p>
+                // --- Step 2: Network & VPN Check (Simulated Server-Side) ---
+                // We call an external API to get our public IP info. This simulates our server looking at the request.
+                const ipInfo = await getIpInfo();
+                
+                // Check 2a: Is the IP address on our whitelist?
+                const isIpOk = ALLOWED_IPS.includes(ipInfo.ipAddress);
+                updateStatusItem('network', 'Network IP', `Your IP: ${ipInfo.ipAddress}`, isIpOk);
+                if (!isIpOk) throw new Error("Verification failed: You are not on an approved network.");
+
+                // Check 2b: Is this a known VPN, Proxy, or Hosting service?
+                const isVpnOk = !ipInfo.isVpnOrProxy;
+                updateStatusItem('vpn', 'VPN/Proxy Check', ipInfo.isVpnOrProxy ? 'Proxy Detected' : 'Connection OK', isVpnOk);
+                if (!isVpnOk) throw new Error("Verification failed: VPNs or Proxies are not allowed.");
+
+                // --- All Checks Passed ---
+                displayFinalResult(true, '✅ Check-in Approved! All checks passed.');
+
+            } catch (error) {
+                // --- A Check Failed ---
+                console.error(error.message);
+                // The specific failure will already be marked in the UI.
+                // We just need to show the final failed state.
+                displayFinalResult(false, `❌ ${error.message}`);
+            } finally {
+                // Re-enable the button
+                checkInButton.disabled = false;
+                checkInButton.textContent = 'Verify & Check In';
+            }
+        }
+
+        // --- UI HELPER FUNCTIONS ---
+
+        function displayInitialStatus() {
+            statusDiv.innerHTML = `
+                <div id="status-location" class="status-item">
+                    <span><span class="dot dot-pending"></span>Geolocation</span>
+                    <span class="text-gray-500">Checking...</span>
+                </div>
+                <div id="status-network" class="status-item">
+                    <span><span class="dot dot-pending"></span>Network IP</span>
+                    <span class="text-gray-500">Checking...</span>
+                </div>
+                <div id="status-vpn" class="status-item">
+                    <span><span class="dot dot-pending"></span>VPN/Proxy Check</span>
+                    <span class="text-gray-500">Checking...</span>
+                </div>
+                <div id="final-result" class="text-center font-bold pt-4"></div>
             `;
-
-            if (isInRange) {
-                statusHTML += `<div class="w-full p-2 rounded-md bg-green-100 text-green-800 font-bold">✅ In Range: Check-in Approved</div>`;
-            } else {
-                statusHTML += `<div class="w-full p-2 rounded-md bg-red-100 text-red-800 font-bold">❌ Out of Range: Check-in Denied</div>`;
-            }
-
-            statusDiv.innerHTML = statusHTML;
         }
 
+        function updateStatusItem(id, name, message, isSuccess) {
+            const item = document.getElementById(`status-${id}`);
+            const dotClass = isSuccess ? 'dot-success' : 'dot-fail';
+            const textClass = isSuccess ? 'text-green-600' : 'text-red-600';
+            item.innerHTML = `
+                <span><span class="dot ${dotClass}"></span>${name}</span>
+                <span class="${textClass} font-semibold">${message}</span>
+            `;
+        }
+
+        function displayFinalResult(isSuccess, message) {
+            const resultDiv = document.getElementById('final-result');
+            resultDiv.className = `text-center font-bold pt-4 ${isSuccess ? 'text-green-700' : 'text-red-700'}`;
+            resultDiv.textContent = message;
+        }
+
+        // --- ASYNC HELPER FUNCTIONS ---
+
         /**
-         * Handles errors that occur during location retrieval.
-         * @param {GeolocationPositionError} error - The object containing error details.
+         * Gets the user's IP address and connection type.
+         * This simulates a server-side check.
+         * @returns {Promise<{ipAddress: string, isVpnOrProxy: boolean}>}
          */
-        function handleError(error) {
-            let errorMessage = 'An unknown error occurred.';
-            switch (error.code) {
-                case error.PERMISSION_DENIED:
-                    errorMessage = "Location access denied. Please enable location permissions in your browser settings.";
-                    break;
-                case error.POSITION_UNAVAILABLE:
-                    errorMessage = "Location information is unavailable. Check your connection or GPS.";
-                    break;
-                case error.TIMEOUT:
-                    errorMessage = "The request to get user location timed out.";
-                    break;
+        async function getIpInfo() {
+            try {
+                // We use a service that provides IP and connection details in JSON format.
+                const response = await fetch('https://ip-api.com/json/?fields=status,message,query,hosting,proxy');
+                if (!response.ok) throw new Error('IP API response was not ok.');
+                const data = await response.json();
+                if (data.status !== 'success') throw new Error(`IP API Error: ${data.message}`);
+                
+                return {
+                    ipAddress: data.query,
+                    // The API flags connections from data centers (hosting) or known proxies/VPNs.
+                    isVpnOrProxy: data.hosting || data.proxy 
+                };
+            } catch (error) {
+                console.error("Could not fetch IP information:", error);
+                throw new Error("Could not verify network connection."); // Propagate error
             }
-            statusDiv.innerHTML = `<p class="text-red-600 font-semibold">${errorMessage}</p>`;
         }
 
-        // --- UTILITY FUNCTION ---
+        /**
+         * Gets the user's GPS coordinates.
+         * @returns {Promise<GeolocationCoordinates>}
+         */
+        function getGeolocation() {
+            return new Promise((resolve, reject) => {
+                if (!('geolocation' in navigator)) {
+                    return reject(new Error("Geolocation is not supported by your browser."));
+                }
+                navigator.geolocation.getCurrentPosition(
+                    position => resolve(position.coords),
+                    error => {
+                        let msg = "Could not get location.";
+                        if(error.code === 1) msg = "Location access denied.";
+                        reject(new Error(msg));
+                    },
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                );
+            });
+        }
 
         /**
-         * Calculates the distance between two GPS coordinates in meters using the Haversine formula.
-         * @param {number} lat1 - Latitude of the first point.
-         * @param {number} lon1 - Longitude of the first point.
-         * @param {number} lat2 - Latitude of the second point.
-         * @param {number} lon2 - Longitude of the second point.
-         * @returns {number} The distance in meters.
+         * Calculates the distance between two GPS coordinates in meters.
          */
         function getDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371e3; // Earth's radius in meters
-            const φ1 = lat1 * Math.PI / 180; // φ, λ in radians
+            const R = 6371e3;
+            const φ1 = lat1 * Math.PI / 180;
             const φ2 = lat2 * Math.PI / 180;
             const Δφ = (lat2 - lat1) * Math.PI / 180;
             const Δλ = (lon2 - lon1) * Math.PI / 180;
-
-            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-                      Math.cos(φ1) * Math.cos(φ2) *
-                      Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+            const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
             const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-            return R * c; // Distance in meters
+            return R * c;
         }
     </script>
 
